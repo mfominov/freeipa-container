@@ -1,12 +1,14 @@
 # Build on top of base CentOS 8 image
 FROM registry.centos.org/centos:8
+ARG ipahealthcheck_exporter_version=0.0.11
 
 RUN groupadd -g 288 kdcproxy ; useradd -u 288 -g 288 -c 'IPA KDC Proxy User' -d '/var/lib/kdcproxy' -s '/sbin/nologin' kdcproxy
 RUN groupadd -g 289 ipaapi; useradd -u 289 -g 289 -c 'IPA Framework User' -r -d / -s '/sbin/nologin' ipaapi
+RUN groupadd -g 290 ipahealthcheck-exporter; useradd -u 290 -g 290 -c 'IPA exporter User' -r -d / -s '/sbin/nologin' ipahealthcheck-exporter
 
 # Workaround 1615948
 RUN ln -s /bin/false /usr/sbin/systemd-machine-id-setup
-RUN yum -y module enable idm:DL1 && yum -y install patch sudo && yum -y remove kexec-tools && yum -y module install --setopt=install_weak_deps=False idm:DL1/adtrust idm:DL1/dns && yum clean all
+RUN yum -y module enable idm:DL1 && yum -y install patch sudo && yum -y remove kexec-tools && yum -y module install --setopt=install_weak_deps=False idm:DL1/adtrust idm:DL1/dns && yum -y install ipa-client-epn && yum clean all
 
 # debug: RUN test $( getent passwd | grep -E "^(dirsrv:x:389|ipaapi:x:289|kdcproxy:x:288|pkiuser:x:17):" | wc -l ) -eq 4
 
@@ -41,6 +43,15 @@ RUN systemd-tmpfiles --remove --create
 # debug: RUN ! test -f /var/lib/systemd/random-seed
 # test-addon: VOLUME [ "/var/log/journal" ]
 # test: systemd-container-diff.sh list-dependencies-rhel-8.out /dev/null docker-diff-minimal-rhel-8.out
+
+# Ipa exporter install
+ADD https://github.com/camptocamp/ipahealthcheck_exporter/releases/download/v${ipahealthcheck_exporter_version}/ipahealthcheck_exporter-${ipahealthcheck_exporter_version}.linux-amd64.tar.gz /usr/local/bin/
+COPY ipahealthcheck_exporter.service /usr/lib/systemd/system/ipahealthcheck_exporter.service
+RUN tar -zxf /usr/local/bin/ipahealthcheck_exporter-${ipahealthcheck_exporter_version}.linux-amd64.tar.gz -C /usr/local/bin/ \
+	&& rm -rf /usr/local/bin/ipahealthcheck_exporter-${ipahealthcheck_exporter_version}.linux-amd64.tar.gz \
+	&& mv /usr/local/bin/ipahealthcheck_exporter-${ipahealthcheck_exporter_version}.linux-amd64/ipahealthcheck_exporter /usr/local/bin/ipahealthcheck_exporter \
+	&& rm -rf /usr/local/bin/ipahealthcheck_exporter-${ipahealthcheck_exporter_version}.linux-amd64 \
+	&& ln -s /usr/lib/systemd/system/ipahealthcheck_exporter.service /etc/systemd/system/multi-user.target.wants/ipahealthcheck_exporter.service
 
 # Prepare for basic ipa-server-install in container
 # Address failing nis-domainname.service in the ipa-client-install step
@@ -86,7 +97,7 @@ COPY service-success-poweroff.conf /usr/lib/systemd/system/ipa-server-configure-
 RUN ln -sv /usr/lib/systemd/system/ipa-server-configure-first.service /data-template/etc/systemd/system/container-ipa.target.wants/ipa-server-configure-first.service
 COPY exit-status.conf /usr/lib/systemd/system/systemd-poweroff.service.d/
 
-EXPOSE 53/udp 53 80 443 389 636 88 464 88/udp 464/udp 123/udp
+EXPOSE 53/udp 53 80 443 389 636 9888 88 464 88/udp 464/udp 123/udp
 
 RUN uuidgen > /data-template/build-id
 
